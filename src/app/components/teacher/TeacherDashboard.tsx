@@ -1,300 +1,623 @@
 import { useState } from "react";
-import { Users, ClipboardList, GraduationCap, LogOut, Bell, ChevronRight, CheckCircle, XCircle, Clock, MapPin, Calendar, BookOpen } from "lucide-react";
+import {
+  Bell,
+  BookOpen,
+  CalendarPlus,
+  CheckCircle,
+  ChevronRight,
+  Clock,
+  ClipboardList,
+  LogOut,
+  MapPin,
+  Trash2,
+  Users,
+  XCircle,
+} from "lucide-react";
+import { CeroJaleMiniSidebar } from "../CeroJaleLogo";
+import type { AvailabilitySlot, Booking } from "../../App";
+import {
+  localDate,
+  sessionHasEnded,
+  type ActionResult,
+} from "../../bookingRules";
 import { AttendanceView } from "./AttendanceView";
 import { GradeRegistrationView } from "./GradeRegistrationView";
-import { CeroJaleMiniSidebar } from "../CeroJaleLogo";
-import type { EnrollmentRequest } from "../../App";
+import { advisorPhotos } from "../../advisorPhotos";
 
-type Tab = "attendance" | "grades" | "enrollments";
+type Tab = "requests" | "availability" | "attendance" | "grades";
 
-interface TeacherDashboardProps {
+interface Props {
   onLogout: () => void;
-  enrollmentRequests: EnrollmentRequest[];
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
+  bookings: Booking[];
+  slots: AvailabilitySlot[];
+  activeAdvisorId: string;
+  onUpdateBooking: (id: string, changes: Partial<Booking>) => ActionResult;
+  onAddSlot: (slot: Omit<AvailabilitySlot, "id" | "advisorId">) => {
+    ok: boolean;
+    message: string;
+  };
+  onRemoveSlot: (id: string) => { ok: boolean; message: string };
 }
 
-const subjects = [
-  { id: "calc", name: "Cálculo Diferencial", code: "MAT-101", group: "A", students: 12 },
-  { id: "prog", name: "Fund. de Programación", code: "ING-201", group: "B", students: 10 },
-  { id: "alg", name: "Álgebra Lineal", code: "MAT-202", group: "C", students: 12 },
-];
+export function TeacherDashboard({
+  onLogout,
+  bookings,
+  slots,
+  activeAdvisorId,
+  onUpdateBooking,
+  onAddSlot,
+  onRemoveSlot,
+}: Props) {
+  const [activeTab, setActiveTab] = useState<Tab>("requests");
+  const [message, setMessage] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [modality, setModality] = useState<"Virtual" | "Presencial">("Virtual");
+  const [location, setLocation] = useState("Sala virtual CeroJale");
+  const [selectedSubject, setSelectedSubject] = useState("Cálculo Diferencial");
+  const advisorBookings = bookings.filter(
+    (booking) => booking.advisorId === activeAdvisorId,
+  );
+  const advisorSlots = slots
+    .filter((slot) => slot.advisorId === activeAdvisorId)
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+  const pending = advisorBookings.filter(
+    (booking) => booking.status === "Pendiente",
+  ).length;
 
-export function TeacherDashboard({ onLogout, enrollmentRequests, onApprove, onReject }: TeacherDashboardProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("enrollments");
-  const [selectedSubject, setSelectedSubject] = useState(subjects[0]);
+  const notify = (text: string) => {
+    setMessage(text);
+    window.setTimeout(() => setMessage(""), 4000);
+  };
+  const addSlot = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!date || !time || !location.trim())
+      return notify("Completa la fecha, hora y ubicación.");
+    const result = onAddSlot({
+      date,
+      time,
+      modality,
+      location: location.trim(),
+    });
+    notify(result.message);
+    if (result.ok) {
+      setDate("");
+      setTime("");
+    }
+  };
 
-  const pendingCount = enrollmentRequests.filter((r) => r.status === "Pendiente").length;
-
-  const navItems: { id: Tab; icon: typeof Users; label: string }[] = [
-    { id: "enrollments", icon: BookOpen, label: "Solicitudes de Matrícula" },
-    { id: "attendance", icon: Users, label: "Lista y Asistencia" },
-    { id: "grades", icon: ClipboardList, label: "Registro de Notas" },
+  const nav = [
+    { id: "requests" as Tab, label: "Solicitudes y sesiones", icon: BookOpen },
+    {
+      id: "availability" as Tab,
+      label: "Mi disponibilidad",
+      icon: CalendarPlus,
+    },
+    { id: "attendance" as Tab, label: "Lista y asistencia", icon: Users },
+    { id: "grades" as Tab, label: "Registro de notas", icon: ClipboardList },
   ];
 
   return (
-    <div className="flex h-screen bg-[#F8FAFC] overflow-hidden">
-      {/* Sidebar */}
-      <div className="w-64 flex-shrink-0 flex flex-col bg-[#4C1D95] text-white">
-        {/* Logo */}
-        <div className="p-5 border-b border-white/10">
+    <div className="flex min-h-screen flex-col bg-[#F8FAFC] md:h-screen md:flex-row md:overflow-hidden">
+      <aside className="flex w-full flex-shrink-0 flex-col bg-[#4C1D95] text-white md:w-64">
+        <div className="flex items-center justify-between border-b border-white/10 p-4 md:p-5">
           <div className="flex items-center gap-3">
-            <div className="bg-white rounded-xl p-1 shadow-md flex-shrink-0">
+            <div className="rounded-xl bg-white p-1 shadow">
               <CeroJaleMiniSidebar />
             </div>
             <div>
-              <div className="flex items-center gap-1">
-                <span className="text-sm font-bold text-white">Cero</span>
-                <span className="text-sm font-bold" style={{ color: "#28E87C" }}>Jale</span>
-              </div>
-              <div className="text-[11px] text-purple-200">Módulo Docente</div>
+              <p className="text-sm font-black">
+                Cero<span className="text-[#28E87C]">Jale</span>
+              </p>
+              <p className="text-[11px] text-purple-200">Panel del asesor</p>
             </div>
           </div>
+          <button onClick={onLogout} className="p-2 text-purple-200 md:hidden">
+            <LogOut size={18} />
+          </button>
         </div>
-
-        {/* Teacher info */}
-        <div className="p-4 border-b border-white/10">
-          <div className="bg-white/10 rounded-xl p-3 flex items-center gap-3">
+        <div className="hidden border-b border-white/10 p-4 md:block">
+          <div className="flex items-center gap-3 rounded-xl bg-white/10 p-3">
             <img
-              src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&auto=format"
+              src={advisorPhotos.roberto}
               alt="Roberto Martínez"
-              className="w-10 h-10 rounded-full object-cover border-2 border-purple-300 flex-shrink-0"
+              className="h-10 w-10 rounded-full object-cover"
             />
             <div>
               <p className="text-sm font-semibold">Roberto Martínez</p>
-              <p className="text-xs text-purple-200">Prof. Ing. Informática</p>
+              <p className="text-xs text-purple-200">Asesor activo · Demo</p>
             </div>
           </div>
         </div>
-
-        <nav className="flex-1 p-4 space-y-1">
-          <p className="text-xs text-purple-300 uppercase tracking-wider mb-3 px-2 font-semibold">Herramientas</p>
-          {navItems.map((item) => {
+        <nav className="flex gap-1 overflow-x-auto p-3 md:flex-1 md:flex-col md:p-4">
+          <p className="hidden px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-purple-300 md:block">
+            Gestión
+          </p>
+          {nav.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const active = activeTab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all text-left relative ${isActive ? "bg-white text-[#4C1D95]" : "text-purple-100 hover:bg-white/10"}`}
+                className={`relative flex min-w-max items-center gap-2 rounded-xl px-3 py-2.5 text-sm md:w-full md:gap-3 md:py-3 ${active ? "bg-white font-semibold text-[#4C1D95]" : "text-purple-100 hover:bg-white/10"}`}
               >
-                <Icon size={18} className={isActive ? "text-[#8B5CF6]" : "text-purple-300"} />
-                <span className={`text-sm flex-1 ${isActive ? "font-semibold" : ""}`}>{item.label}</span>
-                {item.id === "enrollments" && pendingCount > 0 && (
-                  <span className="bg-rose-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
-                    {pendingCount}
+                <Icon size={18} />
+                {item.label}
+                {item.id === "requests" && pending > 0 && (
+                  <span className="ml-auto rounded-full bg-rose-500 px-2 py-0.5 text-[10px] text-white">
+                    {pending}
                   </span>
                 )}
-                {isActive && !pendingCount && <ChevronRight size={14} className="text-[#8B5CF6]" />}
+                {active && pending === 0 && (
+                  <ChevronRight size={14} className="ml-auto hidden md:block" />
+                )}
               </button>
             );
           })}
-
-          <div className="pt-4">
-            <p className="text-xs text-purple-300 uppercase tracking-wider mb-3 px-2 font-semibold">Mis Asignaturas</p>
-            {subjects.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSelectedSubject(s)}
-                className={`w-full flex items-start gap-3 px-3 py-3 rounded-xl transition-all text-left ${selectedSubject.id === s.id ? "bg-white/20" : "hover:bg-white/10"}`}
-              >
-                <div className="w-2 h-2 rounded-full bg-purple-300 mt-1.5 flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-xs text-white truncate">{s.name}</p>
-                  <p className="text-xs text-purple-300">{s.code} · Gr. {s.group} · {s.students} est.</p>
-                </div>
-              </button>
-            ))}
-          </div>
         </nav>
-
-        <div className="p-4 border-t border-white/10">
-          <button onClick={onLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-purple-200 hover:bg-white/10 transition-all">
+        <div className="hidden border-t border-white/10 p-4 md:block">
+          <button
+            onClick={onLogout}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-purple-200 hover:bg-white/10"
+          >
             <LogOut size={18} />
-            <span className="text-sm">Cerrar sesión</span>
+            Cerrar sesión
           </button>
         </div>
-      </div>
-
-      {/* Main */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="bg-white border-b border-[#E5E7EB] px-8 py-4 flex items-center justify-between flex-shrink-0">
+      </aside>
+      <main className="flex min-w-0 flex-1 flex-col md:overflow-hidden">
+        <header className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-4 sm:px-6 md:px-8">
           <div>
-            <h1 className="text-[#111827] font-semibold text-lg">
-              {activeTab === "enrollments" ? "Solicitudes de Matrícula" : activeTab === "attendance" ? "Lista y Asistencia" : "Registro de Calificaciones"}
+            <h1 className="text-lg font-bold text-gray-900">
+              {nav.find((item) => item.id === activeTab)?.label}
             </h1>
-            <p className="text-sm text-[#6B7280]">
-              {activeTab === "enrollments" ? "Aprueba y gestiona las solicitudes de tus estudiantes" : `${selectedSubject.name} · ${selectedSubject.code} · Grupo ${selectedSubject.group}`}
+            <p className="hidden text-sm text-gray-500 sm:block">
+              {activeTab === "requests"
+                ? "Solo solicitudes dirigidas a Roberto Martínez"
+                : activeTab === "availability"
+                  ? "Agrega o elimina horarios para tus estudiantes"
+                  : "Módulo académico existente · Datos de demostración"}
             </p>
           </div>
-          <div className="flex items-center gap-4">
-            {activeTab !== "enrollments" && (
-              <div className="flex bg-[#F3F4F6] rounded-xl p-1">
-                <button
-                  onClick={() => setActiveTab("attendance")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${activeTab === "attendance" ? "bg-white text-[#4C1D95] shadow-sm font-semibold" : "text-[#6B7280] hover:text-[#374151]"}`}
-                >
-                  <Users size={15} /> Asistencia
-                </button>
-                <button
-                  onClick={() => setActiveTab("grades")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all ${activeTab === "grades" ? "bg-white text-[#4C1D95] shadow-sm font-semibold" : "text-[#6B7280] hover:text-[#374151]"}`}
-                >
-                  <ClipboardList size={15} /> Calificaciones
-                </button>
-              </div>
+          <button
+            aria-label="Ver solicitudes dirigidas al asesor"
+            onClick={() => setActiveTab("requests")}
+            className="relative rounded-xl p-2 text-gray-500"
+          >
+            <Bell size={20} />
+            {pending > 0 && (
+              <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-500" />
             )}
-            <button className="relative p-2 rounded-xl hover:bg-[#F3F4F6] transition-colors">
-              <Bell size={20} className="text-[#6B7280]" />
-              {pendingCount > 0 && <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white" />}
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-8">
-          {activeTab === "attendance" && <AttendanceView subject={selectedSubject.name} />}
-          {activeTab === "grades" && <GradeRegistrationView subject={selectedSubject.name} />}
-          {activeTab === "enrollments" && (
-            <EnrollmentRequestsView
-              requests={enrollmentRequests}
-              onApprove={onApprove}
-              onReject={onReject}
+          </button>
+        </header>
+        <div className="flex-1 p-4 sm:p-6 md:overflow-y-auto md:p-8">
+          {message && (
+            <div
+              role="status"
+              className="mb-5 rounded-xl border border-purple-200 bg-purple-50 p-3 text-sm font-semibold text-purple-800"
+            >
+              {message}
+            </div>
+          )}
+          {activeTab === "requests" && (
+            <Requests
+              slots={advisorSlots}
+              bookings={advisorBookings}
+              onUpdate={(id, changes, text) => {
+                const result = onUpdateBooking(id, changes);
+                notify(result.ok ? text : result.message);
+              }}
             />
           )}
+          {activeTab === "availability" && (
+            <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
+              <form
+                onSubmit={addSlot}
+                className="h-fit space-y-4 rounded-2xl border border-gray-200 bg-white p-5"
+              >
+                <div>
+                  <h2 className="font-bold text-gray-900">Agregar horario</h2>
+                  <p className="text-xs text-gray-500">
+                    Los estudiantes podrán reservarlo de inmediato.
+                  </p>
+                </div>
+                <label className="block text-xs font-bold text-gray-700">
+                  Fecha
+                  <input
+                    required
+                    min={localDate()}
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                </label>
+                <label className="block text-xs font-bold text-gray-700">
+                  Hora
+                  <input
+                    required
+                    type="time"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                </label>
+                <label className="block text-xs font-bold text-gray-700">
+                  Modalidad
+                  <select
+                    value={modality}
+                    onChange={(e) => {
+                      const value = e.target.value as "Virtual" | "Presencial";
+                      setModality(value);
+                      setLocation(
+                        value === "Virtual"
+                          ? "Sala virtual CeroJale"
+                          : "Campus La Molina",
+                      );
+                    }}
+                    className="mt-1.5 w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-normal outline-none"
+                  >
+                    <option>Virtual</option>
+                    <option>Presencial</option>
+                  </select>
+                </label>
+                <label className="block text-xs font-bold text-gray-700">
+                  Ubicación
+                  <input
+                    required
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                </label>
+                <button className="w-full rounded-xl bg-[#4C1D95] py-3 text-sm font-bold text-white">
+                  Agregar disponibilidad
+                </button>
+              </form>
+              <section>
+                <h2 className="mb-3 font-bold text-gray-900">
+                  Horarios publicados ({advisorSlots.length})
+                </h2>
+                {advisorSlots.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-14 text-center text-sm text-gray-500">
+                    No has publicado horarios disponibles.
+                  </div>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {advisorSlots.map((slot) => {
+                      const occupied = advisorBookings.some(
+                        (booking) =>
+                          booking.date === slot.date &&
+                          booking.time === slot.time &&
+                          booking.status !== "Cancelada",
+                      );
+                      return (
+                        <div
+                          key={slot.id}
+                          className="flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white p-4"
+                        >
+                          <div>
+                            <p className="font-bold text-gray-900">
+                              {new Date(
+                                `${slot.date}T12:00:00`,
+                              ).toLocaleDateString("es-PE", {
+                                weekday: "short",
+                                day: "numeric",
+                                month: "short",
+                              })}{" "}
+                              · {slot.time}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-500">
+                              {slot.modality} · {slot.location}
+                            </p>
+                            {occupied && (
+                              <span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                                Horario reservado
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            aria-label="Eliminar horario"
+                            disabled={occupied}
+                            onClick={() =>
+                              notify(onRemoveSlot(slot.id).message)
+                            }
+                            className="rounded-xl p-2 text-rose-500 hover:bg-rose-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                          >
+                            <Trash2 size={17} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+          {(activeTab === "attendance" || activeTab === "grades") && (
+            <div className="space-y-5">
+              <label className="block text-xs font-bold text-gray-700">
+                Mis asignaturas
+                <select
+                  value={selectedSubject}
+                  onChange={(event) => setSelectedSubject(event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-gray-200 bg-white p-3 text-sm md:w-auto"
+                >
+                  <option>Cálculo Diferencial</option>
+                  <option>Fundamentos de Programación</option>
+                  <option>Álgebra Lineal</option>
+                </select>
+              </label>
+              <div className="overflow-x-auto">
+                <div className="min-w-[660px]">
+                  {activeTab === "attendance" ? (
+                    <AttendanceView
+                      key={selectedSubject}
+                      subject={selectedSubject}
+                    />
+                  ) : (
+                    <GradeRegistrationView
+                      key={selectedSubject}
+                      subject={selectedSubject}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      </main>
     </div>
   );
 }
 
-function EnrollmentRequestsView({
-  requests,
-  onApprove,
-  onReject,
+function Requests({
+  bookings,
+  slots,
+  onUpdate,
 }: {
-  requests: EnrollmentRequest[];
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
+  bookings: Booking[];
+  slots: AvailabilitySlot[];
+  onUpdate: (id: string, changes: Partial<Booking>, message: string) => void;
 }) {
-  const pending = requests.filter((r) => r.status === "Pendiente");
-  const resolved = requests.filter((r) => r.status !== "Pendiente");
-
+  const ordered = [...bookings].sort(
+    (a, b) =>
+      ({ Pendiente: 0, Confirmada: 1, Realizada: 2, Cancelada: 3 })[a.status] -
+      { Pendiente: 0, Confirmada: 1, Realizada: 2, Cancelada: 3 }[b.status],
+  );
+  const stats = [
+    {
+      label: "Pendientes",
+      value: bookings.filter((b) => b.status === "Pendiente").length,
+      style: "text-amber-600",
+    },
+    {
+      label: "Confirmadas",
+      value: bookings.filter((b) => b.status === "Confirmada").length,
+      style: "text-emerald-600",
+    },
+    {
+      label: "Realizadas",
+      value: bookings.filter((b) => b.status === "Realizada").length,
+      style: "text-blue-600",
+    },
+  ];
   return (
-    <div className="space-y-6">
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: "Total solicitudes", value: requests.length, color: "text-[#3B82F6]", bg: "bg-[#EFF6FF]" },
-          { label: "Pendientes", value: pending.length, color: "text-[#F59E0B]", bg: "bg-[#FFFBEB]" },
-          { label: "Aprobadas", value: requests.filter((r) => r.status === "Aprobado").length, color: "text-[#10B981]", bg: "bg-[#F0FDF4]" },
-        ].map((stat) => (
-          <div key={stat.label} className="bg-white rounded-2xl border border-[#E5E7EB] p-4">
-            <p className="text-xs text-[#6B7280]">{stat.label}</p>
-            <p className={`text-3xl font-bold ${stat.color} mt-1`}>{stat.value}</p>
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        {stats.map((stat) => (
+          <div
+            key={stat.label}
+            className="rounded-2xl border border-gray-200 bg-white p-4"
+          >
+            <p className="text-xs text-gray-500">{stat.label}</p>
+            <p className={`mt-1 text-2xl font-black ${stat.style}`}>
+              {stat.value}
+            </p>
           </div>
         ))}
       </div>
-
-      {/* Pending requests */}
-      {pending.length > 0 && (
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden">
-          <div className="p-5 border-b border-gray-100 flex items-center gap-2">
-            <Clock size={17} className="text-[#F59E0B]" />
-            <h3 className="font-semibold text-[#111827]">Pendientes de aprobación</h3>
-            <span className="ml-auto text-xs bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full font-bold">{pending.length}</span>
-          </div>
-          <div className="divide-y divide-[#F3F4F6]">
-            {pending.map((req) => (
-              <RequestRow key={req.id} req={req} onApprove={onApprove} onReject={onReject} />
-            ))}
-          </div>
+      {ordered.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-16 text-center">
+          <BookOpen size={40} className="mx-auto mb-3 text-gray-300" />
+          <p className="font-semibold text-gray-600">
+            No hay solicitudes para este asesor.
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            Las reservas de otros asesores no se muestran aquí.
+          </p>
         </div>
-      )}
-
-      {/* Empty pending */}
-      {pending.length === 0 && requests.length === 0 && (
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] p-16 text-center">
-          <BookOpen size={40} className="text-[#D1D5DB] mx-auto mb-3" />
-          <p className="text-[#9CA3AF] font-medium">No hay solicitudes de matrícula aún.</p>
-          <p className="text-xs text-[#D1D5DB] mt-1">Cuando un estudiante envíe una solicitud, aparecerá aquí.</p>
-        </div>
-      )}
-      {pending.length === 0 && requests.length > 0 && (
-        <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-2xl p-5 flex items-center gap-3">
-          <CheckCircle size={20} className="text-[#10B981]" />
-          <p className="text-sm text-[#065F46] font-medium">Todas las solicitudes han sido gestionadas.</p>
-        </div>
-      )}
-
-      {/* Resolved requests */}
-      {resolved.length > 0 && (
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden">
-          <div className="p-5 border-b border-gray-100 flex items-center gap-2">
-            <CheckCircle size={17} className="text-[#10B981]" />
-            <h3 className="font-semibold text-[#111827]">Historial gestionado</h3>
-          </div>
-          <div className="divide-y divide-[#F3F4F6]">
-            {resolved.map((req) => (
-              <RequestRow key={req.id} req={req} onApprove={onApprove} onReject={onReject} />
-            ))}
-          </div>
+      ) : (
+        <div className="space-y-3">
+          {ordered.map((booking) => (
+            <article
+              key={booking.id}
+              className="rounded-2xl border border-gray-200 bg-white p-5"
+            >
+              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                <div className="flex gap-3">
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-purple-100 text-sm font-black text-purple-700">
+                    CA
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-bold text-gray-900">
+                        {booking.studentName}
+                      </h3>
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${booking.status === "Pendiente" ? "bg-amber-100 text-amber-800" : booking.status === "Confirmada" ? "bg-emerald-100 text-emerald-800" : booking.status === "Realizada" ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-600"}`}
+                      >
+                        {booking.status}
+                      </span>
+                      {booking.reprogramRequested && (
+                        <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-[10px] font-bold text-purple-800">
+                          Solicita reprogramación
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      {booking.id} · {booking.createdAt}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {booking.status === "Pendiente" && (
+                    <>
+                      <button
+                        onClick={() =>
+                          onUpdate(
+                            booking.id,
+                            { status: "Confirmada" },
+                            "Solicitud aceptada. Ya aparece en el calendario del estudiante.",
+                          )
+                        }
+                        className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white"
+                      >
+                        <CheckCircle size={14} />
+                        Aceptar
+                      </button>
+                      <button
+                        onClick={() =>
+                          onUpdate(
+                            booking.id,
+                            { status: "Cancelada" },
+                            "Solicitud rechazada.",
+                          )
+                        }
+                        className="flex items-center gap-1.5 rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600"
+                      >
+                        <XCircle size={14} />
+                        Rechazar
+                      </button>
+                    </>
+                  )}
+                  {booking.status === "Confirmada" && (
+                    <button
+                      disabled={
+                        !sessionHasEnded(booking) ||
+                        !!booking.reprogramRequested
+                      }
+                      title={
+                        !sessionHasEnded(booking)
+                          ? "Disponible al finalizar la sesión"
+                          : booking.reprogramRequested
+                            ? "Resuelve la reprogramación primero"
+                            : "Marcar sesión realizada"
+                      }
+                      onClick={() =>
+                        onUpdate(
+                          booking.id,
+                          { status: "Realizada", reprogramRequested: false },
+                          "Sesión marcada como realizada. El estudiante ya puede dejar una reseña.",
+                        )
+                      }
+                      className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <CheckCircle size={14} />
+                      Marcar realizada
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 rounded-xl bg-slate-50 p-4 text-xs text-gray-600 sm:grid-cols-3">
+                <p className="font-bold text-[#1E3A8A] sm:col-span-3">
+                  {booking.course}
+                </p>
+                <span className="flex items-center gap-1.5">
+                  <Clock size={13} />
+                  {booking.date} · {booking.time}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <MapPin size={13} />
+                  {booking.modality}
+                </span>
+                <span className="font-bold text-purple-700">
+                  S/{booking.price} · {booking.duration} min
+                </span>
+                <div className="sm:col-span-3">
+                  <p className="text-[10px] font-bold uppercase text-gray-400">
+                    Tema de consulta
+                  </p>
+                  <p className="mt-1 text-sm text-gray-700">{booking.topic}</p>
+                </div>
+              </div>
+              {booking.reprogramRequested &&
+                booking.status === "Confirmada" && (
+                  <ProposalActions
+                    booking={booking}
+                    slots={slots}
+                    onUpdate={onUpdate}
+                  />
+                )}
+              {booking.review && (
+                <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs">
+                  <p className="font-bold text-amber-700">
+                    Reseña del estudiante · {"★".repeat(booking.review.rating)}
+                  </p>
+                  <p className="mt-1 text-gray-600">{booking.review.comment}</p>
+                </div>
+              )}
+            </article>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function RequestRow({
-  req,
-  onApprove,
-  onReject,
+function ProposalActions({
+  booking,
+  slots,
+  onUpdate,
 }: {
-  req: EnrollmentRequest;
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
+  booking: Booking;
+  slots: AvailabilitySlot[];
+  onUpdate: (id: string, changes: Partial<Booking>, message: string) => void;
 }) {
+  const target = slots.find((slot) => slot.id === booking.reprogramSlotId);
   return (
-    <div className="p-5 flex items-start gap-4 hover:bg-[#FAFAFA] transition-colors">
-      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-        {req.studentName.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-3 mb-2">
-          <div>
-            <p className="font-semibold text-[#111827] text-sm">{req.studentName}</p>
-            <p className="text-xs text-[#6B7280]">{req.id} · {req.createdAt}</p>
-          </div>
-          {req.status === "Pendiente" ? (
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={() => onApprove(req.id)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all"
-              >
-                <CheckCircle size={13} /> Aprobar
-              </button>
-              <button
-                onClick={() => onReject(req.id)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold border border-red-200 transition-all"
-              >
-                <XCircle size={13} /> Rechazar
-              </button>
-            </div>
-          ) : (
-            <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 ${req.status === "Aprobado" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
-              {req.status === "Aprobado" ? <CheckCircle size={11} /> : <XCircle size={11} />}
-              {req.status}
-            </span>
-          )}
-        </div>
-        <div className="bg-[#F8FAFC] rounded-xl p-3 border border-[#E5E7EB]">
-          <p className="text-sm font-semibold text-[#1E3A8A] mb-2">{req.subjectName}</p>
-          <div className="flex flex-wrap gap-3 text-xs text-[#6B7280]">
-            <span className="flex items-center gap-1"><Calendar size={11} /> {req.day}</span>
-            <span className="flex items-center gap-1"><Clock size={11} /> {req.time} hrs</span>
-            <span className="flex items-center gap-1"><MapPin size={11} /> {req.campus}</span>
-            <span className="flex items-center gap-1 text-[#3B82F6] font-semibold">S/ {req.cost} · {req.credits} cr.</span>
-          </div>
-        </div>
+    <div className="mt-4 space-y-3 rounded-xl border border-purple-200 bg-purple-50 p-4">
+      <p className="text-sm font-bold text-purple-900">
+        Propuesta de nuevo horario
+      </p>
+      <p className="text-sm text-purple-800">
+        {target
+          ? `${target.date} · ${target.time} · ${target.modality} · ${target.location}`
+          : "El horario propuesto ya no está publicado. Rechaza la solicitud para que el estudiante elija otro."}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          disabled={!target}
+          onClick={() =>
+            target &&
+            onUpdate(
+              booking.id,
+              { date: target.date },
+              "Reprogramación aceptada. Calendario actualizado.",
+            )
+          }
+          className="rounded-xl bg-purple-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-40"
+        >
+          Aceptar cambio
+        </button>
+        <button
+          onClick={() =>
+            onUpdate(
+              booking.id,
+              {
+                reprogramRequested: false,
+                reprogramSlotId: undefined,
+                reprogramNotice:
+                  "El asesor rechazó la reprogramación. Se mantiene tu horario original; puedes proponer otro.",
+              },
+              "Cambio rechazado. Se mantiene el horario original.",
+            )
+          }
+          className="rounded-xl border border-purple-300 px-3 py-2 text-xs font-bold text-purple-800"
+        >
+          Rechazar cambio
+        </button>
       </div>
     </div>
   );

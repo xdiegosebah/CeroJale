@@ -1,390 +1,567 @@
 import { useState } from "react";
-import { BookOpen, CreditCard, X, CheckCircle, MapPin, Clock, Calendar, User } from "lucide-react";
-import type { EnrollmentRequest } from "../../App";
+import {
+  Calendar,
+  CheckCircle2,
+  Clock,
+  MapPin,
+  Search,
+  SlidersHorizontal,
+  Star,
+  User,
+} from "lucide-react";
+import type { AvailabilitySlot, Booking } from "../../App";
+import { slotIsAvailable } from "../../bookingRules";
+import { DemoModal } from "../DemoModal";
+import {
+  ADVISORS,
+  advisorRating,
+  advisorReviews,
+  matchesAdvisorCourse,
+  normalize,
+  type Advisor,
+} from "../../advisors";
+import { advisorPhotos } from "../../advisorPhotos";
 
-interface Subject {
-  id: number;
-  name: string;
-  credits: number;
-  spots: number;
-  cost: number;
-  teacher: { name: string; title: string; photo: string };
-}
-
-const SUBJECTS: Subject[] = [
-  {
-    id: 1, name: "Cálculo Diferencial", credits: 4, spots: 15, cost: 280,
-    teacher: { name: "Dr. Roberto Martínez", title: "Ing. Matemáticas", photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&auto=format" },
-  },
-  {
-    id: 2, name: "Fundamentos de Programación", credits: 3, spots: 8, cost: 210,
-    teacher: { name: "Ing. Ana Flores", title: "Ciencias de la Computación", photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop&auto=format" },
-  },
-  {
-    id: 3, name: "Álgebra Lineal", credits: 4, spots: 22, cost: 280,
-    teacher: { name: "Dr. Carlos Mendoza", title: "Ing. Matemáticas", photo: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&h=80&fit=crop&auto=format" },
-  },
-  {
-    id: 4, name: "Física General I", credits: 4, spots: 3, cost: 280,
-    teacher: { name: "Msc. Diana Torres", title: "Física Aplicada", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop&auto=format" },
-  },
-  {
-    id: 5, name: "Inglés Técnico I", credits: 2, spots: 18, cost: 140,
-    teacher: { name: "Prof. Sarah Johnson", title: "Lingüística Aplicada", photo: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=80&h=80&fit=crop&auto=format" },
-  },
-  {
-    id: 6, name: "Introducción a la Ingeniería", credits: 2, spots: 30, cost: 140,
-    teacher: { name: "Ing. Miguel Rojas", title: "Ing. Industrial", photo: "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=80&h=80&fit=crop&auto=format" },
-  },
-  {
-    id: 7, name: "Estadística Descriptiva", credits: 3, spots: 11, cost: 210,
-    teacher: { name: "Dra. Patricia Vega", title: "Estadística y Probabilidad", photo: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=80&h=80&fit=crop&auto=format" },
-  },
-  {
-    id: 8, name: "Química General", credits: 4, spots: 0, cost: 280,
-    teacher: { name: "Dr. Luis Castillo", title: "Química Industrial", photo: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=80&h=80&fit=crop&auto=format" },
-  },
-];
-
-const DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-const TIMES = ["07:00", "08:00", "09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00"];
-const CAMPUSES = ["Campus La Molina", "Campus San Isidro", "Campus Miraflores", "Virtual MS Teams"];
-
-interface EnrollmentConfig {
-  day: string;
-  time: string;
-  campus: string;
-}
-
-interface CartItem {
-  subject: Subject;
-  config: EnrollmentConfig;
-}
-
-interface EnrollmentViewProps {
-  onEnroll: (req: Omit<EnrollmentRequest, "id" | "status" | "createdAt">) => void;
-  enrollmentRequests: EnrollmentRequest[];
-}
-
-export function EnrollmentView({ onEnroll, enrollmentRequests }: EnrollmentViewProps) {
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [modalSubject, setModalSubject] = useState<Subject | null>(null);
-  const [config, setConfig] = useState<EnrollmentConfig>({ day: "Lunes", time: "09:00", campus: "Virtual MS Teams" });
-  const [ordered, setOrdered] = useState(false);
-
-  const inCart = (id: number) => cart.some((c) => c.subject.id === id);
-  const alreadyEnrolled = (id: number) => enrollmentRequests.some((r) => r.subjectId === id);
-
-  const openModal = (subject: Subject) => {
-    if (subject.spots === 0 || inCart(subject.id) || alreadyEnrolled(subject.id)) return;
-    setModalSubject(subject);
-    setConfig({ day: "Lunes", time: "09:00", campus: "Virtual MS Teams" });
+interface Props {
+  bookings: Booking[];
+  slots: AvailabilitySlot[];
+  onBook: (booking: Omit<Booking, "id" | "status" | "createdAt">) => {
+    ok: boolean;
+    message: string;
   };
+}
 
-  const confirmAdd = () => {
-    if (!modalSubject) return;
-    setCart((prev) => [...prev, { subject: modalSubject, config }]);
-    setModalSubject(null);
-  };
+export function EnrollmentView({ bookings, slots, onBook }: Props) {
+  const [search, setSearch] = useState("");
+  const [maxPrice, setMaxPrice] = useState("Todos");
+  const [modality, setModality] = useState("Todas");
+  const [profile, setProfile] = useState<Advisor | null>(null);
+  const [bookingAdvisor, setBookingAdvisor] = useState<Advisor | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlot | null>(
+    null,
+  );
+  const [topic, setTopic] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [message, setMessage] = useState("");
 
-  const removeFromCart = (id: number) => setCart((prev) => prev.filter((c) => c.subject.id !== id));
+  const availableSlots = slots.filter((slot) =>
+    slotIsAvailable(slot, bookings),
+  );
+  const matchingSlots = (advisorId: string) =>
+    availableSlots
+      .filter(
+        (slot) =>
+          slot.advisorId === advisorId &&
+          (modality === "Todas" || slot.modality === modality),
+      )
+      .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+  const advisorSlots = bookingAdvisor ? matchingSlots(bookingAdvisor.id) : [];
+  const availableDates = [...new Set(advisorSlots.map((slot) => slot.date))];
+  const dateSlots = advisorSlots.filter((slot) => slot.date === selectedDate);
 
-  const totalCredits = cart.reduce((s, c) => s + c.subject.credits, 0);
-  const totalCost = cart.reduce((s, c) => s + c.subject.cost, 0);
+  const filtered = ADVISORS.filter((advisor) => {
+    const matchesCourse = matchesAdvisorCourse(advisor, search);
+    const matchesPrice =
+      maxPrice === "Todos" || advisor.price <= Number(maxPrice);
+    const matchesModality =
+      modality === "Todas" || matchingSlots(advisor.id).length > 0;
+    return matchesCourse && matchesPrice && matchesModality;
+  });
 
-  const handleOrder = () => {
-    cart.forEach((item) => {
-      onEnroll({
-        studentName: "Carlos Andrade",
-        subjectId: item.subject.id,
-        subjectName: item.subject.name,
-        teacher: item.subject.teacher.name,
-        credits: item.subject.credits,
-        day: item.config.day,
-        time: item.config.time,
-        campus: item.config.campus,
-        cost: item.subject.cost,
-      });
-    });
-    setCart([]);
-    setOrdered(true);
-  };
-
-  if (ordered) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full py-20">
-        <div className="bg-[#F0FDF4] rounded-2xl p-10 text-center max-w-md">
-          <CheckCircle size={64} className="text-[#10B981] mx-auto mb-4" />
-          <h2 className="text-[#065F46] mb-2">¡Solicitud enviada al docente!</h2>
-          <p className="text-sm text-[#6B7280] mb-1">Tu matrícula está pendiente de aprobación docente.</p>
-          <p className="text-[#6B7280] mb-6 text-sm">Orden N° <span className="text-[#111827] font-semibold">ORD-2026-{String(Math.floor(Math.random() * 90000) + 10000)}</span></p>
-          <button onClick={() => setOrdered(false)} className="bg-[#1E40AF] text-white px-6 py-2.5 rounded-xl hover:bg-[#1E3A8A] transition-colors text-sm font-semibold">
-            Nueva matrícula
-          </button>
-        </div>
-      </div>
+  const openBooking = (advisor: Advisor) => {
+    setBookingAdvisor(advisor);
+    setSelectedCourse(
+      advisor.courses.find((course) =>
+        normalize(course).includes(normalize(search)),
+      ) ?? advisor.course,
     );
-  }
+    setSelectedDate("");
+    setSelectedSlot(null);
+    setTopic("");
+    setConfirming(false);
+    setMessage("");
+  };
+
+  const continueToSummary = () => {
+    if (
+      !selectedCourse ||
+      !selectedSlot ||
+      !advisorSlots.some((slot) => slot.id === selectedSlot.id) ||
+      !topic.trim()
+    ) {
+      setMessage(
+        "Selecciona una fecha, un horario y cuéntanos qué tema necesitas reforzar.",
+      );
+      return;
+    }
+    setMessage("");
+    setConfirming(true);
+  };
+
+  const confirm = () => {
+    if (!bookingAdvisor || !selectedSlot) return;
+    const result = onBook({
+      studentName: "Carlos Andrade",
+      advisorId: bookingAdvisor.id,
+      advisorName: bookingAdvisor.name,
+      course: selectedCourse,
+      date: selectedSlot.date,
+      time: selectedSlot.time,
+      modality: selectedSlot.modality,
+      location: selectedSlot.location,
+      duration: bookingAdvisor.duration,
+      price: bookingAdvisor.price,
+      topic: topic.trim(),
+    });
+    if (result.ok) {
+      setBookingAdvisor(null);
+      setMessage("");
+      window.setTimeout(() => setMessage(""), 5000);
+    } else {
+      setConfirming(false);
+      setSelectedSlot(null);
+    }
+    setMessage(result.message);
+  };
 
   return (
-    <div className="flex gap-6 h-full">
-      {/* Subjects table */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-3 mb-5">
-          <BookOpen size={20} className="text-[#3B82F6]" />
-          <h2 className="text-[#111827] text-lg font-semibold">Asignaturas Disponibles — 2026-I</h2>
-        </div>
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[#F8FAFC] border-b border-[#E5E7EB]">
-                {["Docente", "Asignatura", "Créditos", "Cupos", "Estado", "Acción"].map((h) => (
-                  <th key={h} className="text-left py-3.5 px-4 text-xs text-[#6B7280] uppercase tracking-wide font-semibold">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {SUBJECTS.map((subject, idx) => {
-                const full = subject.spots === 0;
-                const cartItem = inCart(subject.id);
-                const enrolled = alreadyEnrolled(subject.id);
-                const disabled = full || cartItem || enrolled;
-                return (
-                  <tr
-                    key={subject.id}
-                    className={`border-b border-[#F3F4F6] transition-colors ${disabled ? "opacity-60" : "cursor-pointer hover:bg-[#EFF6FF]"} ${cartItem ? "bg-[#EFF6FF]" : idx % 2 === 0 ? "bg-white" : "bg-[#FAFAFA]"}`}
-                    onClick={() => !disabled && openModal(subject)}
-                  >
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2.5">
-                        <img
-                          src={subject.teacher.photo}
-                          alt={subject.teacher.name}
-                          className="w-9 h-9 rounded-full object-cover border-2 border-[#BFDBFE] flex-shrink-0"
-                          onError={(e) => { (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(subject.teacher.name)}&background=1E3A8A&color=fff&size=80`; }}
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-[#111827] truncate">{subject.teacher.name}</p>
-                          <p className="text-[11px] text-[#9CA3AF] truncate">{subject.teacher.title}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`text-sm font-medium ${cartItem ? "text-[#1D4ED8]" : "text-[#111827]"}`}>{subject.name}</span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#EFF6FF] text-[#3B82F6] text-xs font-semibold">{subject.credits} cr.</span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`text-sm font-medium ${full ? "text-[#EF4444]" : subject.spots <= 5 ? "text-[#F59E0B]" : "text-[#10B981]"}`}>
-                        {full ? "Sin cupos" : `${subject.spots} disp.`}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      {enrolled ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold"><CheckCircle size={11} /> Solicitada</span>
-                      ) : cartItem ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold">En carrito</span>
-                      ) : full ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-700 text-xs font-semibold">Lleno</span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-xs font-semibold">Disponible</span>
-                      )}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      {!disabled && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); openModal(subject); }}
-                          className="px-3 py-1.5 bg-[#1E3A8A] text-white rounded-lg text-xs font-semibold hover:bg-[#1E40AF] transition-colors"
-                        >
-                          Matricularme
-                        </button>
-                      )}
-                      {cartItem && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeFromCart(subject.id); }}
-                          className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-xs font-semibold hover:bg-red-100 transition-colors"
-                        >
-                          Quitar
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Cart / summary */}
-      <div className="w-72 flex-shrink-0">
-        <div className="bg-white rounded-2xl border border-[#E5E7EB] p-5 sticky top-0">
-          <h3 className="text-[#111827] font-semibold mb-4 flex items-center gap-2">
-            <CreditCard size={17} className="text-[#3B82F6]" />
-            Resumen de Matrícula
-          </h3>
-
-          {cart.length === 0 ? (
-            <div className="text-center py-8">
-              <div className="w-12 h-12 rounded-full bg-[#F3F4F6] flex items-center justify-center mx-auto mb-3">
-                <BookOpen size={20} className="text-[#9CA3AF]" />
-              </div>
-              <p className="text-sm text-[#9CA3AF]">Haz clic en "Matricularme" para agregar materias</p>
-            </div>
-          ) : (
-            <div className="space-y-3 mb-4 max-h-72 overflow-y-auto pr-1">
-              {cart.map(({ subject, config: cfg }) => (
-                <div key={subject.id} className="bg-[#F8FAFC] rounded-xl p-3 border border-[#E5E7EB]">
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <p className="text-sm text-[#111827] font-medium leading-tight">{subject.name}</p>
-                    <button onClick={() => removeFromCart(subject.id)} className="text-[#9CA3AF] hover:text-[#EF4444] flex-shrink-0">
-                      <X size={13} />
-                    </button>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 text-[11px] text-[#6B7280]">
-                      <Calendar size={11} /> {cfg.day}
-                    </div>
-                    <div className="flex items-center gap-1.5 text-[11px] text-[#6B7280]">
-                      <Clock size={11} /> {cfg.time} hrs
-                    </div>
-                    <div className="flex items-center gap-1.5 text-[11px] text-[#6B7280]">
-                      <MapPin size={11} /> {cfg.campus}
-                    </div>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between">
-                    <span className="text-[11px] text-[#9CA3AF]">{subject.credits} créditos</span>
-                    <span className="text-sm font-bold text-[#1E40AF]">S/ {subject.cost}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="border-t border-[#F3F4F6] pt-4 space-y-2 mb-5">
-            <div className="flex justify-between text-sm">
-              <span className="text-[#6B7280]">Total créditos</span>
-              <span className="text-[#111827] font-semibold">{totalCredits}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[#6B7280] text-sm">Costo total</span>
-              <span className="text-[#1E40AF] font-bold text-lg">S/ {totalCost}</span>
-            </div>
-          </div>
-
-          <button
-            disabled={cart.length === 0}
-            onClick={handleOrder}
-            className={`w-full py-3 rounded-xl text-white text-sm font-semibold transition-all ${cart.length === 0 ? "bg-[#D1D5DB] cursor-not-allowed" : "bg-[#1E40AF] hover:bg-[#1E3A8A]"}`}
-          >
-            Enviar solicitud al docente
-          </button>
-        </div>
-      </div>
-
-      {/* Enrollment modal */}
-      {modalSubject && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-[#1E3A8A] to-[#3B82F6] p-6 text-white relative">
-              <button
-                onClick={() => setModalSubject(null)}
-                className="absolute right-4 top-4 p-1.5 rounded-full bg-white/15 hover:bg-white/25 transition-colors"
-              >
-                <X size={15} />
-              </button>
-              <h3 className="font-bold text-lg">Seleccionar Horario</h3>
-              <p className="text-xs text-blue-200 mt-0.5">Configura tu matrícula</p>
-            </div>
-
-            <div className="p-6 space-y-5">
-              {/* Subject + teacher info */}
-              <div className="flex items-center gap-3 bg-[#F8FAFC] rounded-2xl p-4 border border-[#E5E7EB]">
-                <img
-                  src={modalSubject.teacher.photo}
-                  alt={modalSubject.teacher.name}
-                  className="w-12 h-12 rounded-full object-cover border-2 border-[#BFDBFE] flex-shrink-0"
-                  onError={(e) => { (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(modalSubject.teacher.name)}&background=1E3A8A&color=fff&size=80`; }}
-                />
-                <div>
-                  <p className="text-sm font-bold text-[#1E3A8A]">{modalSubject.name}</p>
-                  <p className="text-xs text-[#6B7280] flex items-center gap-1 mt-0.5">
-                    <User size={11} /> {modalSubject.teacher.name}
-                  </p>
-                  <p className="text-xs text-[#9CA3AF]">{modalSubject.credits} créditos · S/ {modalSubject.cost}</p>
-                </div>
-              </div>
-
-              {/* Day selector */}
-              <div>
-                <label className="block text-xs font-bold text-[#374151] uppercase tracking-wide mb-2">
-                  <Calendar size={12} className="inline mr-1" />Día de clase
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {DAYS.map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => setConfig((c) => ({ ...c, day: d }))}
-                      className={`py-2 px-3 rounded-xl text-xs font-semibold border-2 transition-all ${config.day === d ? "bg-[#1E3A8A] text-white border-[#1E3A8A]" : "bg-white text-[#6B7280] border-[#E5E7EB] hover:border-[#93C5FD]"}`}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Time selector */}
-              <div>
-                <label className="block text-xs font-bold text-[#374151] uppercase tracking-wide mb-2">
-                  <Clock size={12} className="inline mr-1" />Hora de inicio
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {TIMES.map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setConfig((c) => ({ ...c, time: t }))}
-                      className={`py-2 rounded-xl text-xs font-semibold border-2 transition-all ${config.time === t ? "bg-[#1E3A8A] text-white border-[#1E3A8A]" : "bg-white text-[#6B7280] border-[#E5E7EB] hover:border-[#93C5FD]"}`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Campus selector */}
-              <div>
-                <label className="block text-xs font-bold text-[#374151] uppercase tracking-wide mb-2">
-                  <MapPin size={12} className="inline mr-1" />Modalidad / Campus
-                </label>
-                <div className="space-y-2">
-                  {CAMPUSES.map((campus) => (
-                    <button
-                      key={campus}
-                      type="button"
-                      onClick={() => setConfig((c) => ({ ...c, campus }))}
-                      className={`w-full text-left py-2.5 px-4 rounded-xl text-sm border-2 transition-all font-medium ${config.campus === campus ? "bg-[#EFF6FF] border-[#3B82F6] text-[#1D4ED8]" : "bg-white border-[#E5E7EB] text-[#374151] hover:border-[#93C5FD]"}`}
-                    >
-                      {campus.startsWith("Virtual") ? "🖥️" : "🏛️"} {campus}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Confirm */}
-              <button
-                onClick={confirmAdd}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#1E3A8A] to-[#3B82F6] text-white font-bold text-sm shadow-md hover:opacity-90 transition-all mt-1"
-              >
-                Agregar al carrito
-              </button>
-            </div>
-          </div>
+    <div className="space-y-6">
+      {message && !bookingAdvisor && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800"
+        >
+          <CheckCircle2 size={18} />
+          {message}
         </div>
       )}
+      <p className="text-xs text-gray-500">
+        Perfiles, fotos y reseñas de ejemplo. Todas las asesorías duran 45
+        minutos; no se realizan cobros.
+      </p>
+      <div className="rounded-2xl border border-[#E5E7EB] bg-white p-4">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_190px]">
+          <label className="relative">
+            <Search
+              size={18}
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
+            />
+            <input
+              aria-label="Buscar por nombre del curso"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por nombre del curso..."
+              className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </label>
+          <label className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3">
+            <SlidersHorizontal size={15} className="text-[#1E3A8A]" />
+            <select
+              aria-label="Precio máximo"
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(e.target.value)}
+              className="w-full bg-transparent py-2.5 text-sm outline-none"
+            >
+              <option value="Todos">Cualquier precio</option>
+              <option value="25">Hasta S/25</option>
+              <option value="30">Hasta S/30</option>
+              <option value="35">Hasta S/35</option>
+            </select>
+          </label>
+          <select
+            aria-label="Modalidad"
+            value={modality}
+            onChange={(e) => setModality(e.target.value)}
+            className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm outline-none"
+          >
+            <option value="Todas">Todas las modalidades</option>
+            <option>Virtual</option>
+            <option>Presencial</option>
+          </select>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-16 text-center">
+          <Search className="mx-auto mb-3 text-gray-300" size={36} />
+          <p className="font-semibold text-gray-600">
+            No encontramos asesorías con esos filtros.
+          </p>
+          <button
+            onClick={() => {
+              setSearch("");
+              setMaxPrice("Todos");
+              setModality("Todas");
+            }}
+            className="mt-3 text-sm font-semibold text-blue-700"
+          >
+            Limpiar filtros
+          </button>
+        </div>
+      ) : (
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((advisor) => {
+            const nextSlot = matchingSlots(advisor.id)[0];
+            const publishedModalities = [
+              ...new Set(
+                slots
+                  .filter((slot) => slot.advisorId === advisor.id)
+                  .map((slot) => slot.modality),
+              ),
+            ];
+            return (
+              <article
+                key={advisor.id}
+                className="flex flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg"
+              >
+                <div className="h-1.5 bg-gradient-to-r from-[#003B71] via-[#0072CE] to-[#28E87C]" />
+                <div className="flex-1 p-5">
+                  <div className="flex items-start gap-3">
+                    <img
+                      src={advisorPhotos[advisor.id]}
+                      alt={advisor.name}
+                      className="h-14 w-14 shrink-0 rounded-2xl object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate font-bold text-gray-900">
+                        {advisor.name}
+                      </h3>
+                      <p className="truncate text-xs text-gray-500">
+                        {advisor.specialty}
+                      </p>
+                      <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-600">
+                        <Star size={13} fill="currentColor" />
+                        {advisorRating(advisor, bookings)}{" "}
+                        <span className="font-normal text-gray-400">
+                          · {advisorReviews(advisor, bookings).length} reseñas ·
+                          Demo
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-5 rounded-2xl bg-slate-50 p-4">
+                    <p className="font-bold text-[#1E3A8A]">
+                      {advisor.courses.join(" · ")}
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600">
+                      <span className="flex items-center gap-1.5">
+                        <Clock size={14} />
+                        {advisor.duration} min
+                      </span>
+                      <span className="font-bold text-[#1E3A8A]">
+                        S/{advisor.price} total
+                      </span>
+                      <span className="col-span-2 flex items-center gap-1.5">
+                        <MapPin size={14} />
+                        {publishedModalities.join(" / ") ||
+                          "Sin disponibilidad publicada"}
+                      </span>
+                    </div>
+                  </div>
+                  <p
+                    className={`mt-3 text-xs font-semibold ${nextSlot ? "text-emerald-700" : "text-gray-400"}`}
+                  >
+                    {nextSlot
+                      ? `Próximo: ${new Date(`${nextSlot.date}T12:00:00`).toLocaleDateString("es-PE", { weekday: "short", day: "numeric", month: "short" })} · ${nextSlot.time}`
+                      : "Sin horarios disponibles"}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 border-t border-gray-100 p-4">
+                  <button
+                    onClick={() => setProfile(advisor)}
+                    className="rounded-xl border border-blue-200 py-2.5 text-xs font-bold text-[#1E3A8A]"
+                  >
+                    Ver perfil
+                  </button>
+                  <button
+                    disabled={!nextSlot}
+                    onClick={() => openBooking(advisor)}
+                    className="rounded-xl bg-[#1E3A8A] py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-300"
+                  >
+                    Reservar asesoría
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {profile && (
+        <DemoModal
+          title={`Perfil de ${profile.name}`}
+          onClose={() => setProfile(null)}
+        >
+          <div className="bg-gradient-to-r from-[#003B71] to-[#0072CE] p-6 text-white">
+            <div className="flex items-center gap-4 pr-4">
+              <img
+                src={advisorPhotos[profile.id]}
+                alt={profile.name}
+                className="h-20 w-20 shrink-0 rounded-2xl object-cover ring-4 ring-white/20"
+              />
+              <div>
+                <p className="mb-1 inline-block rounded-full bg-[#28E87C] px-2 py-0.5 text-[10px] font-black uppercase text-[#003B71]">
+                  Perfil de demostración
+                </p>
+                <h2 className="text-xl font-black">{profile.name}</h2>
+                <p className="text-sm text-blue-100">{profile.specialty}</p>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-5 p-6">
+            <section>
+              <h3 className="mb-2 text-sm font-bold text-gray-900">
+                Cursos que enseña
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {profile.courses.map((course) => (
+                  <span
+                    key={course}
+                    className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800"
+                  >
+                    {course}
+                  </span>
+                ))}
+              </div>
+            </section>
+            <section>
+              <h3 className="mb-1 text-sm font-bold text-gray-900">
+                Metodología
+              </h3>
+              <p className="text-sm leading-6 text-gray-600">
+                {profile.methodology}
+              </p>
+            </section>
+            <section>
+              <h3 className="mb-2 text-sm font-bold text-gray-900">
+                Reseñas · {advisorRating(profile, bookings)}/5
+              </h3>
+              <div className="space-y-2">
+                {advisorReviews(profile, bookings).map((review) => (
+                  <div key={review.id} className="rounded-xl bg-gray-50 p-3">
+                    <div className="flex justify-between">
+                      <span className="text-xs font-bold">
+                        {review.author} ·{" "}
+                        {review.example
+                          ? "Ejemplo ficticio"
+                          : "Sesión realizada en este prototipo"}
+                      </span>
+                      <span className="text-xs text-amber-500">
+                        {"★".repeat(review.rating)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-600">{review.text}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+            <button
+              disabled={matchingSlots(profile.id).length === 0}
+              onClick={() => {
+                setProfile(null);
+                openBooking(profile);
+              }}
+              className="w-full rounded-xl bg-[#1E3A8A] py-3 text-sm font-bold text-white disabled:bg-gray-300"
+            >
+              {matchingSlots(profile.id).length
+                ? "Reservar asesoría"
+                : "Sin horarios disponibles"}
+            </button>
+          </div>
+        </DemoModal>
+      )}
+
+      {bookingAdvisor && (
+        <DemoModal
+          title={`Reservar ${selectedCourse}`}
+          onClose={() => setBookingAdvisor(null)}
+        >
+          <div className="border-b border-gray-100 p-6">
+            <p className="text-xs font-bold uppercase tracking-wider text-blue-600">
+              {confirming ? "Revisa antes de confirmar" : "Nueva reserva"}
+            </p>
+            <h2 className="text-xl font-black text-[#003B71]">
+              {selectedCourse}
+            </h2>
+            <p className="text-sm text-gray-500">con {bookingAdvisor.name}</p>
+          </div>
+          {!confirming ? (
+            <div className="space-y-5 p-6">
+              <label className="block text-xs font-bold text-gray-700">
+                Curso a reservar
+                <select
+                  aria-label="Curso a reservar"
+                  value={selectedCourse}
+                  onChange={(event) => setSelectedCourse(event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm"
+                >
+                  {bookingAdvisor.courses.map((course) => (
+                    <option key={course}>{course}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs font-bold text-gray-700">
+                Fecha disponible
+                <select
+                  value={selectedDate}
+                  onChange={(e) => {
+                    setSelectedDate(e.target.value);
+                    setSelectedSlot(null);
+                  }}
+                  className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm outline-none"
+                >
+                  <option value="">Selecciona una fecha</option>
+                  {availableDates.map((date) => (
+                    <option key={date} value={date}>
+                      {new Date(`${date}T12:00:00`).toLocaleDateString(
+                        "es-PE",
+                        { weekday: "long", day: "numeric", month: "long" },
+                      )}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div>
+                <p className="mb-2 text-xs font-bold text-gray-700">
+                  Horario y modalidad
+                </p>
+                {selectedDate ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    {dateSlots.map((slot) => (
+                      <button
+                        key={slot.id}
+                        onClick={() => setSelectedSlot(slot)}
+                        className={`rounded-xl border-2 p-3 text-left text-xs ${selectedSlot?.id === slot.id ? "border-blue-600 bg-blue-50 text-blue-800" : "border-gray-200"}`}
+                      >
+                        <span className="block font-bold">
+                          {slot.time} · {slot.modality}
+                        </span>
+                        <span className="mt-1 block text-gray-500">
+                          {slot.location}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-xl bg-gray-50 p-3 text-xs text-gray-400">
+                    Primero selecciona una fecha.
+                  </p>
+                )}
+              </div>
+              <label className="block text-xs font-bold text-gray-700">
+                ¿Qué tema necesitas reforzar? *
+                <textarea
+                  required
+                  maxLength={240}
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  placeholder="Ej.: límites laterales y ejercicios para el parcial"
+                  className="mt-2 min-h-24 w-full resize-none rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </label>
+              {message && (
+                <p
+                  role="alert"
+                  className="rounded-xl bg-rose-50 p-3 text-xs font-semibold text-rose-700"
+                >
+                  {message}
+                </p>
+              )}
+              <button
+                onClick={continueToSummary}
+                className="w-full rounded-xl bg-[#1E3A8A] py-3 text-sm font-bold text-white"
+              >
+                Ver resumen
+              </button>
+            </div>
+          ) : (
+            selectedSlot && (
+              <div className="space-y-4 p-6">
+                <div className="space-y-3 rounded-2xl bg-slate-50 p-4 text-sm">
+                  <Summary
+                    label="Asesor"
+                    value={bookingAdvisor.name}
+                    icon={<User size={15} />}
+                  />
+                  <Summary label="Curso" value={selectedCourse} />
+                  <Summary
+                    label="Fecha"
+                    value={new Date(
+                      `${selectedSlot.date}T12:00:00`,
+                    ).toLocaleDateString("es-PE", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                    icon={<Calendar size={15} />}
+                  />
+                  <Summary
+                    label="Hora y modalidad"
+                    value={`${selectedSlot.time} · ${selectedSlot.modality}`}
+                    icon={<Clock size={15} />}
+                  />
+                  <Summary
+                    label="Duración"
+                    value={`${bookingAdvisor.duration} minutos`}
+                  />
+                  <Summary
+                    label="Precio total"
+                    value={`S/${bookingAdvisor.price}`}
+                  />
+                </div>
+                <div className="rounded-xl border border-blue-100 p-3">
+                  <p className="text-xs font-bold text-gray-700">
+                    Tema a reforzar
+                  </p>
+                  <p className="mt-1 break-words text-sm text-gray-600">
+                    {topic}
+                  </p>
+                </div>
+                <p className="text-[11px] text-gray-400">
+                  Prototipo: no se realizará ningún cobro ni procesamiento de
+                  pago.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setConfirming(false)}
+                    className="rounded-xl border border-gray-200 py-3 text-sm font-bold text-gray-600"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    onClick={confirm}
+                    className="rounded-xl bg-[#1E3A8A] py-3 text-sm font-bold text-white"
+                  >
+                    Confirmar reserva
+                  </button>
+                </div>
+              </div>
+            )
+          )}
+        </DemoModal>
+      )}
+    </div>
+  );
+}
+
+function Summary({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="flex items-center gap-1.5 text-gray-500">
+        {icon}
+        {label}
+      </span>
+      <span className="text-right font-bold text-gray-900">{value}</span>
     </div>
   );
 }

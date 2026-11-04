@@ -1,6 +1,6 @@
-export function CeroJaleMiniSidebar() {
+export function CeroJaleMiniSidebar({ size = 40 }: { size?: number }) {
   return (
-    <svg viewBox="84 42 200 202" width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+    <svg role="img" aria-label="Logo CeroJale" viewBox="80 40 266 208" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
       <rect width="400" height="500" fill="transparent" />
       <rect x="86" y="46" width="172" height="23" rx="5" fill="#001E3C" />
       <circle cx="172" cy="46" r="5.5" fill="#002E5C" />
