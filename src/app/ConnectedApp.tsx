@@ -18,6 +18,9 @@ import {
   UserRound,
   RefreshCw,
   ShieldCheck,
+  GraduationCap,
+  MapPin,
+  Monitor,
 } from "lucide-react";
 import { supabase, friendlyError } from "../lib/supabase";
 import { CeroJaleMiniSidebar } from "./components/CeroJaleLogo";
@@ -68,6 +71,7 @@ type Review = {
 };
 type BusySlot = { advisor_id: string; starts_at: string };
 type CourseRequest = {
+  location?: string;
   id: string;
   student_id: string;
   student_name: string;
@@ -281,7 +285,7 @@ function AuthScreen({
                   className={field}
                 >
                   <option value="student">Estudiante</option>
-                  <option value="advisor">Asesor</option>
+                  <option value="advisor">Docente / asesor</option>
                 </select>
               </Label>
             </>
@@ -409,6 +413,7 @@ export default function ConnectedApp() {
   const generation = useRef(0);
   const mutationLock = useRef(false);
   const [tab, setTab] = useState("catalog");
+  const [viewMode, setViewMode] = useState<Role | null>(null);
   useEffect(() => {
     if (!supabase) {
       setInitializing(false);
@@ -496,7 +501,7 @@ export default function ConnectedApp() {
               slot_id: "",
               advisor_name: "Asesor por asignar",
               status: r.status as Booking["status"],
-              location: "Por coordinar al aceptar un profesor",
+              location: r.location || "Por coordinar al aceptar un profesor",
               proposed_slot_id: null,
               notice: "Horario solicitado. Aún no es una sesión confirmada.",
               course_request: true,
@@ -517,10 +522,15 @@ export default function ConnectedApp() {
     if (!userId) {
       generation.current++;
       setData(null);
+      setViewMode(null);
       setLoading(false);
       return;
     }
     setData(null);
+    const savedView = sessionStorage.getItem(`cj-view-${userId}`);
+    setViewMode(
+      savedView === "advisor" || savedView === "student" ? savedView : null,
+    );
     setTab("catalog");
     void load(userId);
     const timer = window.setInterval(() => {
@@ -544,13 +554,18 @@ export default function ConnectedApp() {
     setError("");
     setMessage("");
     try {
-      const { error } = await supabase.rpc(
-        action.startsWith("course_") ? "cj_course_request" : "cj_mutate",
-        {
-          p_action: action.startsWith("course_") ? action.slice(7) : action,
-          p_data: payload,
-        },
-      );
+      const { error } =
+        action === "teaching_enable"
+          ? await supabase.rpc("cj_enable_teaching", { p_data: payload })
+          : await supabase.rpc(
+              action.startsWith("course_") ? "cj_course_request" : "cj_mutate",
+              {
+                p_action: action.startsWith("course_")
+                  ? action.slice(7)
+                  : action,
+                p_data: payload,
+              },
+            );
       if (error) throw error;
       await load(userId, true);
       setMessage(
@@ -612,13 +627,28 @@ export default function ConnectedApp() {
         </button>
       </div>
     );
-  const advisor = data.profile.role === "advisor";
+  const advisor = (viewMode ?? data.profile.role) === "advisor";
+  const ownAdvisor = data.advisors.find(
+    (a) => a.user_id === data.profile.user_id,
+  );
+  const switchView = (next: Role) => {
+    setViewMode(next);
+    sessionStorage.setItem(`cj-view-${data.profile.user_id}`, next);
+    setTab(next === "advisor" ? "requests" : "catalog");
+    setMessage("");
+    setError("");
+  };
   const currentTab = advisor && tab === "catalog" ? "requests" : tab;
   const nav = advisor
     ? [
-        { id: "requests", label: "Solicitudes y sesiones", icon: BookOpen },
+        { id: "requests", label: "Confirmar asesorías", icon: BookOpen },
         { id: "availability", label: "Mi disponibilidad", icon: Clock },
-        { id: "profile", label: "Mi perfil", icon: UserRound },
+        { id: "profile", label: "Mi perfil docente", icon: UserRound },
+        {
+          id: "teacher-calendar",
+          label: "Calendario docente",
+          icon: CalendarDays,
+        },
       ]
     : [
         { id: "catalog", label: "Buscar asesorías", icon: Search },
@@ -639,7 +669,7 @@ export default function ConnectedApp() {
               Cero<span className="text-[#28E87C]">Jale</span>
             </p>
             <p className="text-xs text-white/70">
-              {advisor ? "Panel del asesor" : "Asesorías académicas"}
+              {advisor ? "Modo docente" : "Modo estudiante"}
             </p>
           </div>
         </div>
@@ -649,7 +679,30 @@ export default function ConnectedApp() {
             {session.user.email}
           </p>
         </div>
-        <nav className="grid grid-cols-3 gap-1 p-2 md:flex md:flex-1 md:flex-col md:gap-2 md:p-4">
+        <div
+          className="grid grid-cols-2 gap-2 border-b border-white/10 p-3"
+          aria-label="Modo de uso"
+        >
+          <button
+            disabled={busy}
+            aria-pressed={!advisor}
+            onClick={() => switchView("student")}
+            className={`rounded-xl px-2 py-3 text-xs font-bold ${!advisor ? "bg-white text-[#003B71]" : "bg-white/10 text-white"}`}
+          >
+            Modo estudiante
+          </button>
+          <button
+            disabled={busy}
+            aria-pressed={advisor}
+            onClick={() => switchView("advisor")}
+            className={`rounded-xl px-2 py-3 text-xs font-bold ${advisor ? "bg-white text-purple-900" : "bg-white/10 text-white"}`}
+          >
+            Modo docente
+          </button>
+        </div>
+        <nav
+          className={`grid ${advisor ? "grid-cols-2" : "grid-cols-3"} gap-1 p-2 md:flex md:flex-1 md:flex-col md:gap-2 md:p-4`}
+        >
           {nav.map((item) => (
             <button
               key={item.id}
@@ -738,23 +791,41 @@ export default function ConnectedApp() {
                 calendar={currentTab === "calendar"}
               />
             )}
-          {advisor && currentTab === "requests" && (
-            <>
-              <CourseInbox data={data} busy={busy} mutate={mutate} />
-              <BookingList data={data} busy={busy} mutate={mutate} />
-            </>
-          )}
-          {advisor && currentTab === "availability" && (
-            <Availability data={data} busy={busy} mutate={mutate} />
-          )}
-          {advisor && currentTab === "profile" && (
+          {advisor && !ownAdvisor && (
             <AdvisorProfile
-              key={data.profile.user_id}
-              advisor={data.advisors.find(
-                (a) => a.user_id === data.profile.user_id,
-              )!}
+              key="teaching-onboarding"
+              advisor={undefined}
+              catalog={data.courses}
+              enroll
               busy={busy}
               mutate={mutate}
+            />
+          )}
+          {advisor && ownAdvisor && currentTab === "requests" && (
+            <>
+              <CourseInbox data={data} busy={busy} mutate={mutate} />
+              <BookingList data={data} busy={busy} mutate={mutate} advisor />
+            </>
+          )}
+          {advisor && ownAdvisor && currentTab === "availability" && (
+            <Availability data={data} busy={busy} mutate={mutate} />
+          )}
+          {advisor && ownAdvisor && currentTab === "profile" && (
+            <AdvisorProfile
+              key={data.profile.user_id}
+              advisor={ownAdvisor}
+              catalog={data.courses}
+              busy={busy}
+              mutate={mutate}
+            />
+          )}
+          {advisor && ownAdvisor && currentTab === "teacher-calendar" && (
+            <BookingList
+              data={data}
+              busy={busy}
+              mutate={mutate}
+              advisor
+              calendar
             />
           )}
           <p className="flex items-center gap-2 text-xs text-gray-500">
@@ -817,6 +888,7 @@ function Catalog({
   const [confirm, setConfirm] = useState(false);
   const advisors = data.advisors.filter(
     (a) =>
+      a.user_id !== data.profile.user_id &&
       a.courses.length &&
       a.courses.some((c) => normalize(c).includes(normalize(search))) &&
       Number(a.price) <= Number(price) &&
@@ -1107,20 +1179,26 @@ function BookingList({
   busy,
   mutate,
   calendar = false,
+  advisor = false,
 }: {
   data: Data;
   busy: boolean;
   mutate: Mutate;
   calendar?: boolean;
+  advisor?: boolean;
 }) {
-  const advisor = data.profile.role === "advisor";
   const [status, setStatus] = useState("");
   const [change, setChange] = useState<Booking | null>(null);
   const [newSlot, setNewSlot] = useState("");
   const [review, setReview] = useState<Booking | null>(null);
   const [rating, setRating] = useState("5");
   const [comment, setComment] = useState("");
-  const list = data.bookings.filter((b) =>
+  const viewBookings = data.bookings.filter((b) =>
+    advisor
+      ? b.advisor_id === data.profile.user_id
+      : b.student_id === data.profile.user_id,
+  );
+  const list = viewBookings.filter((b) =>
     calendar
       ? ["Pendiente", "Confirmada"].includes(b.status) && !ended(b)
       : !status || b.status === status,
@@ -1128,7 +1206,7 @@ function BookingList({
   const choices = change ? freeSlots(data, change.advisor_id, change.id) : [];
   return (
     <>
-      {calendar && <WeekCalendar bookings={data.bookings} />}
+      {calendar && <WeekCalendar bookings={viewBookings} />}
       {calendar && (
         <h2 className="text-lg font-bold text-[#003B71]">
           Próximas asesorías y horarios solicitados
@@ -1242,7 +1320,7 @@ function BookingList({
                             className={primary}
                             onClick={() => void mutate("confirm", { id: b.id })}
                           >
-                            Aceptar
+                            Confirmar asesoría
                           </button>
                         )}
                         <button
@@ -1560,10 +1638,14 @@ function AdvisorProfile({
   advisor,
   busy,
   mutate,
+  catalog,
+  enroll = false,
 }: {
-  advisor: Advisor;
+  advisor?: Advisor;
   busy: boolean;
   mutate: Mutate;
+  catalog: CourseOffering[];
+  enroll?: boolean;
 }) {
   const [specialty, setSpecialty] = useState(advisor?.specialty ?? "");
   const [courses, setCourses] = useState(advisor?.courses.join("\n") ?? "");
@@ -1574,7 +1656,7 @@ function AdvisorProfile({
       className={`${panel} max-w-2xl space-y-5`}
       onSubmit={async (e) => {
         e.preventDefault();
-        await mutate("profile", {
+        await mutate(enroll ? "teaching_enable" : "profile", {
           specialty,
           courses: courses
             .split("\n")
@@ -1585,10 +1667,14 @@ function AdvisorProfile({
         });
       }}
     >
-      <h2 className="text-lg font-bold">Tu perfil público</h2>
+      <h2 className="flex items-center gap-2 text-lg font-bold">
+        <GraduationCap size={24} />
+        {enroll ? "Activa tu modo docente" : "Tu perfil docente"}
+      </h2>
       <p className="text-sm text-gray-500">
-        Al completar tus cursos aparecerás en el buscador. Publica horarios para
-        que puedan reservarte.
+        {enroll
+          ? "Usa tu misma cuenta para enseñar. Elige los cursos que dominas y completa tu perfil para recibir solicitudes y confirmar asesorías."
+          : "Tus cursos determinan qué solicitudes puedes confirmar. Publica horarios virtuales o presenciales para que puedan reservarte."}
       </p>
       <Label title="Carrera o especialidad">
         <input
@@ -1600,6 +1686,40 @@ function AdvisorProfile({
           className={field}
         />
       </Label>
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-bold text-gray-700">
+          Selecciona los cursos que enseñas
+        </legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {catalog.map((c) => (
+            <label
+              key={c.name}
+              className="flex items-center gap-2 rounded-xl border border-gray-200 p-3 text-xs"
+            >
+              <input
+                type="checkbox"
+                checked={courses
+                  .split("\n")
+                  .map((v) => v.trim())
+                  .includes(c.name)}
+                onChange={(e) => {
+                  const current = courses
+                    .split("\n")
+                    .map((v) => v.trim())
+                    .filter(Boolean);
+                  setCourses(
+                    (e.target.checked
+                      ? [...current, c.name]
+                      : current.filter((v) => v !== c.name)
+                    ).join("\n"),
+                  );
+                }}
+              />
+              {c.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <Label title="Cursos que enseñas (uno por línea)">
         <textarea
           required
@@ -1633,7 +1753,7 @@ function AdvisorProfile({
         />
       </Label>
       <button disabled={busy} className={primary}>
-        Guardar perfil
+        {enroll ? "Activar perfil docente" : "Guardar perfil"}
       </button>
     </form>
   );
@@ -1661,6 +1781,7 @@ function CourseCatalog({
   const [time, setTime] = useState("");
   const [method, setMethod] = useState("");
   const [topic, setTopic] = useState("");
+  const [place, setPlace] = useState("");
   const [summary, setSummary] = useState(false);
   const [error, setError] = useState("");
   const courses = data.courses.filter(
@@ -1726,6 +1847,7 @@ function CourseCatalog({
                   setTime("");
                   setMethod(modality || c.modalities[0]);
                   setTopic("");
+                  setPlace("");
                   setSummary(false);
                   setError("");
                 }}
@@ -1768,6 +1890,12 @@ function CourseCatalog({
                 return;
               }
               if (!topic.trim()) return;
+              if (method === "Presencial" && place.trim().length < 2) {
+                setError(
+                  "Indica el lugar propuesto para la asesoría presencial.",
+                );
+                return;
+              }
               if (!summary) {
                 setSummary(true);
                 return;
@@ -1777,6 +1905,10 @@ function CourseCatalog({
                   course: selected.name,
                   starts_at: starts,
                   modality: method,
+                  location:
+                    method === "Presencial"
+                      ? place.trim()
+                      : "Enlace por coordinar",
                   topic,
                 })
               ) {
@@ -1792,6 +1924,11 @@ function CourseCatalog({
               <div className="space-y-3 rounded-xl bg-blue-50 p-4 text-sm">
                 <p>{formatDate(starts)} · 45 minutos</p>
                 <p>{method}</p>
+                {method === "Presencial" && (
+                  <p>
+                    <strong>Lugar propuesto:</strong> {place}
+                  </p>
+                )}
                 <p className="break-words">{topic}</p>
                 <p className="font-bold">S/{selected.price} por sesión</p>
                 <p>
@@ -1825,17 +1962,49 @@ function CourseCatalog({
                     className={field}
                   />
                 </Label>
-                <Label title="Modalidad de la asesoría">
-                  <select
-                    value={method}
-                    onChange={(e) => setMethod(e.target.value)}
-                    className={field}
-                  >
+                <fieldset>
+                  <legend className="mb-2 text-xs font-bold text-gray-700">
+                    Modalidad de la asesoría
+                  </legend>
+                  <div className="grid grid-cols-2 gap-3">
                     {selected.modalities.map((m) => (
-                      <option key={m}>{m}</option>
+                      <label
+                        key={m}
+                        className={`flex cursor-pointer items-center gap-2 rounded-xl border-2 p-3 text-sm ${method === m ? "border-blue-700 bg-blue-50 font-bold text-blue-900" : "border-gray-200"}`}
+                      >
+                        <input
+                          type="radio"
+                          name="request-modality"
+                          value={m}
+                          checked={method === m}
+                          onChange={() => setMethod(m)}
+                        />
+                        {m === "Presencial" ? (
+                          <MapPin size={18} />
+                        ) : (
+                          <Monitor size={18} />
+                        )}
+                        {m}
+                      </label>
                     ))}
-                  </select>
-                </Label>
+                  </div>
+                </fieldset>
+                {method === "Presencial" && (
+                  <Label title="Lugar propuesto para la asesoría presencial">
+                    <input
+                      required
+                      minLength={2}
+                      maxLength={200}
+                      value={place}
+                      onChange={(e) => setPlace(e.target.value)}
+                      placeholder="Ej.: biblioteca o campus, punto de encuentro"
+                      className={field}
+                    />
+                    <span className="mt-2 block text-xs font-normal text-gray-500">
+                      El docente revisará el lugar al confirmar la sesión.
+                    </span>
+                  </Label>
+                )}
                 <Label title="¿Qué tema quieres reforzar?">
                   <textarea
                     required
@@ -1896,7 +2065,9 @@ function CourseInbox({
   const [location, setLocation] = useState("");
   const requests = data.requests.filter(
     (r) =>
-      r.status === "Pendiente" && new Date(r.starts_at).getTime() > Date.now(),
+      r.student_id !== data.profile.user_id &&
+      r.status === "Pendiente" &&
+      new Date(r.starts_at).getTime() > Date.now(),
   );
   return (
     <section className="space-y-3">
@@ -1920,6 +2091,12 @@ function CourseInbox({
           <p className="text-sm">
             {formatDate(r.starts_at)} · {r.modality} · S/{r.price}
           </p>
+          {r.modality === "Presencial" && (
+            <p className="flex items-center gap-2 break-words text-sm text-gray-600">
+              <MapPin size={16} />
+              Lugar propuesto: {r.location || "Por coordinar"}
+            </p>
+          )}
           <p className="break-words text-sm text-gray-600">{r.topic}</p>
           <button
             className={primary}
@@ -1927,11 +2104,12 @@ function CourseInbox({
             onClick={() => {
               setSelected(r);
               setLocation(
-                r.modality === "Virtual" ? "Enlace por coordinar" : "",
+                r.location ||
+                  (r.modality === "Virtual" ? "Enlace por coordinar" : ""),
               );
             }}
           >
-            Aceptar solicitud
+            Confirmar asesoría
           </button>
         </article>
       ))}
@@ -1970,8 +2148,12 @@ function CourseInbox({
                 className={field}
               />
             </Label>
+            <p className="text-xs text-gray-500">
+              Al confirmar, el estudiante verá tu nombre, el lugar o enlace y el
+              estado Confirmada en Mis asesorías y Calendario.
+            </p>
             <button disabled={busy} className={`${primary} w-full`}>
-              Aceptar y confirmar sesión
+              Confirmar que daré la asesoría
             </button>
           </form>
         </DemoModal>
