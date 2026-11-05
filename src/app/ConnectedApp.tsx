@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { COURSE_CATALOG, type CourseOffering } from "./courseCatalog";
 import type { Session } from "@supabase/supabase-js";
 import {
   BookOpen,
@@ -56,6 +57,7 @@ type Booking = {
   status: "Pendiente" | "Confirmada" | "Realizada" | "Cancelada";
   proposed_slot_id: string | null;
   notice: string | null;
+  course_request?: boolean;
 };
 type Review = {
   booking_id: string;
@@ -65,7 +67,21 @@ type Review = {
   comment: string;
 };
 type BusySlot = { advisor_id: string; starts_at: string };
+type CourseRequest = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  course: string;
+  starts_at: string;
+  modality: string;
+  price: number;
+  topic: string;
+  status: "Pendiente" | "Asignada" | "Cancelada";
+};
 type Data = {
+  requests: CourseRequest[];
+  courses: CourseOffering[];
+  catalogReady: boolean;
   profile: Profile;
   advisors: Advisor[];
   slots: Slot[];
@@ -450,15 +466,42 @@ export default function ConnectedApp() {
         supabase.from("cj_bookings").select("*").order("starts_at"),
         supabase.from("cj_reviews").select("*"),
         supabase.rpc("cj_busy_slots"),
+        supabase.from("cj_course_requests").select("*").order("starts_at"),
+        supabase.from("cj_courses").select("*"),
       ]);
-      const failed = responses.find((r) => r.error);
+      const failed = responses.slice(0, 6).find((r) => r.error);
+      const catalogReady = !responses[6].error && !responses[7].error;
+      const optionalFailure = responses
+        .slice(6)
+        .find((r) => r.error && !["PGRST205", "42P01"].includes(r.error.code));
+      if (optionalFailure?.error) throw optionalFailure.error;
       if (failed?.error) throw failed.error;
       if (ticket !== generation.current) return;
       setData({
+        catalogReady,
+        requests: (responses[6].data ?? []) as CourseRequest[],
+        courses: catalogReady
+          ? ((responses[7].data ?? []) as CourseOffering[])
+          : COURSE_CATALOG,
         profile: responses[0].data as Profile,
         advisors: (responses[1].data ?? []) as Advisor[],
         slots: (responses[2].data ?? []) as Slot[],
-        bookings: (responses[3].data ?? []) as Booking[],
+        bookings: [
+          ...((responses[3].data ?? []) as Booking[]),
+          ...((responses[6].data ?? []) as CourseRequest[])
+            .filter((r) => r.student_id === userId && r.status !== "Asignada")
+            .map((r) => ({
+              ...r,
+              advisor_id: "",
+              slot_id: "",
+              advisor_name: "Asesor por asignar",
+              status: r.status as Booking["status"],
+              location: "Por coordinar al aceptar un profesor",
+              proposed_slot_id: null,
+              notice: "Horario solicitado. Aún no es una sesión confirmada.",
+              course_request: true,
+            })),
+        ].sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
         reviews: (responses[4].data ?? []) as Review[],
         busy: (responses[5].data ?? []) as BusySlot[],
       });
@@ -501,13 +544,22 @@ export default function ConnectedApp() {
     setError("");
     setMessage("");
     try {
-      const { error } = await supabase.rpc("cj_mutate", {
-        p_action: action,
-        p_data: payload,
-      });
+      const { error } = await supabase.rpc(
+        action.startsWith("course_") ? "cj_course_request" : "cj_mutate",
+        {
+          p_action: action.startsWith("course_") ? action.slice(7) : action,
+          p_data: payload,
+        },
+      );
       if (error) throw error;
       await load(userId, true);
-      setMessage("Cambios guardados.");
+      setMessage(
+        action === "course_create"
+          ? "Solicitud guardada en Mis asesorías y Calendario. Pendiente de que un profesor acepte."
+          : action === "book"
+            ? "Reserva guardada en Mis asesorías y Calendario. Pendiente de confirmación."
+            : "Cambios guardados.",
+      );
       return true;
     } catch (e) {
       setError(friendlyError(e));
@@ -597,7 +649,7 @@ export default function ConnectedApp() {
             {session.user.email}
           </p>
         </div>
-        <nav className="flex gap-2 overflow-x-auto p-3 md:flex-1 md:flex-col md:p-4">
+        <nav className="grid grid-cols-3 gap-1 p-2 md:flex md:flex-1 md:flex-col md:gap-2 md:p-4">
           {nav.map((item) => (
             <button
               key={item.id}
@@ -605,7 +657,7 @@ export default function ConnectedApp() {
                 setTab(item.id);
                 setMessage("");
               }}
-              className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-3 text-left text-sm ${currentTab === item.id ? "bg-white font-bold text-[#003B71]" : "text-white/80 hover:bg-white/10"}`}
+              className={`flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-3 text-center text-xs md:flex-row md:justify-start md:gap-3 md:px-3 md:text-left md:text-sm ${currentTab === item.id ? "bg-white font-bold text-[#003B71]" : "text-white/80 hover:bg-white/10"}`}
             >
               <item.icon size={18} />
               {item.label}
@@ -670,7 +722,12 @@ export default function ConnectedApp() {
             </p>
           )}
           {!advisor && currentTab === "catalog" && (
-            <Catalog data={data} busy={busy} mutate={mutate} />
+            <Catalog
+              data={data}
+              busy={busy}
+              mutate={mutate}
+              onBooked={() => setTab("bookings")}
+            />
           )}
           {!advisor &&
             (currentTab === "bookings" || currentTab === "calendar") && (
@@ -682,7 +739,10 @@ export default function ConnectedApp() {
               />
             )}
           {advisor && currentTab === "requests" && (
-            <BookingList data={data} busy={busy} mutate={mutate} />
+            <>
+              <CourseInbox data={data} busy={busy} mutate={mutate} />
+              <BookingList data={data} busy={busy} mutate={mutate} />
+            </>
           )}
           {advisor && currentTab === "availability" && (
             <Availability data={data} busy={busy} mutate={mutate} />
@@ -739,10 +799,12 @@ function Catalog({
   data,
   busy,
   mutate,
+  onBooked,
 }: {
   data: Data;
   busy: boolean;
   mutate: Mutate;
+  onBooked: () => void;
 }) {
   const [search, setSearch] = useState("");
   const [price, setPrice] = useState("35");
@@ -817,10 +879,22 @@ function Catalog({
           <option>Presencial</option>
         </select>
       </div>
+      <CourseCatalog
+        data={data}
+        search={search}
+        maxPrice={Number(price)}
+        modality={modality}
+        busy={busy}
+        mutate={mutate}
+        onBooked={onBooked}
+      />
+      <h2 className="text-lg font-bold text-[#003B71]">
+        Reservar con un profesor
+      </h2>
       {!advisors.length ? (
         <div className={`${panel} py-12 text-center text-gray-500`}>
-          Todavía no hay asesores que coincidan con tu búsqueda. Los asesores
-          deben crear su cuenta y completar su perfil para aparecer aquí.
+          No hay profesores que coincidan con estos filtros. Puedes solicitar un
+          curso del catálogo de arriba y elegir tu horario.
         </div>
       ) : (
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
@@ -925,8 +999,10 @@ function Catalog({
                 setConfirm(true);
                 return;
               }
-              if (await mutate("book", { slot_id: slot, course, topic }))
+              if (await mutate("book", { slot_id: slot, course, topic })) {
                 setSelected(null);
+                onBooked();
+              }
             }}
           >
             <h2 className="text-xl font-bold text-[#003B71]">
@@ -1046,12 +1122,18 @@ function BookingList({
   const [comment, setComment] = useState("");
   const list = data.bookings.filter((b) =>
     calendar
-      ? b.status === "Confirmada" && !ended(b)
+      ? ["Pendiente", "Confirmada"].includes(b.status) && !ended(b)
       : !status || b.status === status,
   );
   const choices = change ? freeSlots(data, change.advisor_id, change.id) : [];
   return (
     <>
+      {calendar && <WeekCalendar bookings={data.bookings} />}
+      {calendar && (
+        <h2 className="text-lg font-bold text-[#003B71]">
+          Próximas asesorías y horarios solicitados
+        </h2>
+      )}
       {!calendar && (
         <select
           aria-label="Filtrar reservas por estado"
@@ -1085,7 +1167,11 @@ function BookingList({
                       {advisor ? b.student_name : b.advisor_name}
                     </p>
                   </div>
-                  <Status>{b.status}</Status>
+                  <Status>
+                    {b.course_request && b.status === "Pendiente"
+                      ? "Pendiente de asignación"
+                      : b.status}
+                  </Status>
                 </div>
                 <div className="my-4 space-y-2 rounded-xl bg-slate-50 p-3 text-sm">
                   <p>{formatDate(b.starts_at)} · 45 min</p>
@@ -1162,7 +1248,12 @@ function BookingList({
                         <button
                           disabled={busy}
                           className={secondary}
-                          onClick={() => void mutate("cancel", { id: b.id })}
+                          onClick={() =>
+                            void mutate(
+                              b.course_request ? "course_cancel" : "cancel",
+                              { id: b.id },
+                            )
+                          }
                         >
                           {advisor ? "Rechazar" : "Cancelar"}
                         </button>
@@ -1545,5 +1636,467 @@ function AdvisorProfile({
         Guardar perfil
       </button>
     </form>
+  );
+}
+
+function CourseCatalog({
+  data,
+  search,
+  maxPrice,
+  modality,
+  busy,
+  mutate,
+  onBooked,
+}: {
+  data: Data;
+  search: string;
+  maxPrice: number;
+  modality: string;
+  busy: boolean;
+  mutate: Mutate;
+  onBooked: () => void;
+}) {
+  const [selected, setSelected] = useState<CourseOffering | null>(null);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [method, setMethod] = useState("");
+  const [topic, setTopic] = useState("");
+  const [summary, setSummary] = useState(false);
+  const [error, setError] = useState("");
+  const courses = data.courses.filter(
+    (c) =>
+      normalize(c.name).includes(normalize(search)) &&
+      c.price <= maxPrice &&
+      (!modality || c.modalities.includes(modality)),
+  );
+  const starts = date && time ? `${date}T${time}:00-05:00` : "";
+  const conflict =
+    starts &&
+    data.bookings.some(
+      (b) => b.status !== "Cancelada" && overlaps(b.starts_at, starts),
+    );
+  return (
+    <section className="space-y-4" aria-label="Catálogo de cursos">
+      <div>
+        <h2 className="text-xl font-bold text-[#003B71]">Elige tu curso</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          {data.courses.length} cursos · S/25–35 por sesión de 45 minutos.
+        </p>
+        <p className="mt-2 text-sm text-gray-600">
+          Elige fecha y hora para solicitar una asesoría. Aparecerá en tu
+          calendario como pendiente hasta que un profesor la acepte.
+        </p>
+      </div>
+      {!data.catalogReady && (
+        <p
+          role="alert"
+          className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900"
+        >
+          El catálogo está visible. Para activar las solicitudes guardadas,
+          falta que el administrador active esta actualización.
+        </p>
+      )}
+      {courses.length ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {courses.map((c) => (
+            <article
+              key={c.name}
+              className={`${panel} flex flex-col border-t-4 border-t-[#28E87C]`}
+            >
+              <div className="mb-3 w-fit rounded-xl bg-blue-50 p-3 text-blue-800">
+                <BookOpen size={22} />
+              </div>
+              <h3 className="flex-1 font-bold text-[#003B71]">{c.name}</h3>
+              <p className="mt-3 text-xs text-gray-500">
+                {c.modalities.join(" · ")}
+              </p>
+              <p className="my-3 text-xl font-black text-[#1E3A8A]">
+                S/{c.price}{" "}
+                <span className="text-xs font-normal text-gray-500">
+                  / 45 min
+                </span>
+              </p>
+              <p className="mb-4 text-xs text-amber-800">Asesor por asignar</p>
+              <button
+                className={primary}
+                disabled={busy}
+                onClick={() => {
+                  setSelected(c);
+                  setDate("");
+                  setTime("");
+                  setMethod(modality || c.modalities[0]);
+                  setTopic("");
+                  setSummary(false);
+                  setError("");
+                }}
+              >
+                Seleccionar curso
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className={`${panel} text-sm text-gray-500`}>
+          No hay cursos con esos filtros. Prueba otro nombre, precio o
+          modalidad.
+        </p>
+      )}
+      {selected && (
+        <DemoModal
+          title={`Solicitar ${selected.name}`}
+          onClose={() => !busy && setSelected(null)}
+        >
+          <form
+            className="space-y-4 p-6 pt-10"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setError("");
+              if (!data.catalogReady) {
+                setError(
+                  "Las solicitudes aún no están habilitadas. Contacta al administrador de CeroJale.",
+                );
+                return;
+              }
+              if (!starts || new Date(starts).getTime() <= Date.now()) {
+                setError("Elige una fecha y hora futuras de Lima.");
+                return;
+              }
+              if (conflict) {
+                setError(
+                  "Este horario se cruza con otra asesoría de tu calendario.",
+                );
+                return;
+              }
+              if (!topic.trim()) return;
+              if (!summary) {
+                setSummary(true);
+                return;
+              }
+              if (
+                await mutate("course_create", {
+                  course: selected.name,
+                  starts_at: starts,
+                  modality: method,
+                  topic,
+                })
+              ) {
+                setSelected(null);
+                onBooked();
+              }
+            }}
+          >
+            <h2 className="text-lg font-bold text-[#003B71]">
+              {selected.name}
+            </h2>
+            {summary ? (
+              <div className="space-y-3 rounded-xl bg-blue-50 p-4 text-sm">
+                <p>{formatDate(starts)} · 45 minutos</p>
+                <p>{method}</p>
+                <p className="break-words">{topic}</p>
+                <p className="font-bold">S/{selected.price} por sesión</p>
+                <p>
+                  Quedará pendiente de asignación. No se cobra al enviar la
+                  solicitud ni se confirma disponibilidad de un profesor
+                  todavía.
+                </p>
+                <p>Podrás verla en Mis asesorías y en Calendario.</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-gray-500">
+                  S/{selected.price} · 45 minutos · Asesor por asignar
+                </p>
+                <Label title="Fecha solicitada">
+                  <input
+                    required
+                    type="date"
+                    min={todayLima()}
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className={field}
+                  />
+                </Label>
+                <Label title="Hora de Lima">
+                  <input
+                    required
+                    type="time"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    className={field}
+                  />
+                </Label>
+                <Label title="Modalidad de la asesoría">
+                  <select
+                    value={method}
+                    onChange={(e) => setMethod(e.target.value)}
+                    className={field}
+                  >
+                    {selected.modalities.map((m) => (
+                      <option key={m}>{m}</option>
+                    ))}
+                  </select>
+                </Label>
+                <Label title="¿Qué tema quieres reforzar?">
+                  <textarea
+                    required
+                    maxLength={240}
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    className={field}
+                  />
+                </Label>
+                {!!conflict && (
+                  <p className="text-sm text-rose-700">
+                    Este horario se cruza con otra asesoría de tu calendario.
+                  </p>
+                )}
+              </>
+            )}
+            {error && (
+              <p
+                role="alert"
+                className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700"
+              >
+                {error}
+              </p>
+            )}
+            {summary && (
+              <button
+                type="button"
+                disabled={busy}
+                className={secondary}
+                onClick={() => setSummary(false)}
+              >
+                Editar horario
+              </button>
+            )}
+            <button
+              disabled={busy || !!conflict}
+              className={`${primary} w-full`}
+            >
+              {summary ? "Guardar solicitud" : "Ver resumen de solicitud"}
+            </button>
+          </form>
+        </DemoModal>
+      )}
+    </section>
+  );
+}
+
+function CourseInbox({
+  data,
+  busy,
+  mutate,
+}: {
+  data: Data;
+  busy: boolean;
+  mutate: Mutate;
+}) {
+  const [selected, setSelected] = useState<CourseRequest | null>(null);
+  const [location, setLocation] = useState("");
+  const requests = data.requests.filter(
+    (r) =>
+      r.status === "Pendiente" && new Date(r.starts_at).getTime() > Date.now(),
+  );
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-bold text-[#003B71]">
+        Solicitudes de tus cursos
+      </h2>
+      <p className="text-sm text-gray-500">
+        Al aceptar confirmas la fecha, modalidad y tarifa indicada por sesión de
+        45 minutos.
+      </p>
+      {!requests.length && (
+        <p className={`${panel} text-sm text-gray-500`}>
+          No hay solicitudes pendientes para los cursos de tu perfil.
+        </p>
+      )}
+      {requests.map((r) => (
+        <article key={r.id} className={`${panel} space-y-3`}>
+          <h3 className="font-bold text-blue-900">
+            {r.course} · {r.student_name}
+          </h3>
+          <p className="text-sm">
+            {formatDate(r.starts_at)} · {r.modality} · S/{r.price}
+          </p>
+          <p className="break-words text-sm text-gray-600">{r.topic}</p>
+          <button
+            className={primary}
+            disabled={busy}
+            onClick={() => {
+              setSelected(r);
+              setLocation(
+                r.modality === "Virtual" ? "Enlace por coordinar" : "",
+              );
+            }}
+          >
+            Aceptar solicitud
+          </button>
+        </article>
+      ))}
+      <h2 className="pt-4 text-lg font-bold text-[#003B71]">Mis sesiones</h2>
+      {selected && (
+        <DemoModal
+          title="Aceptar solicitud de curso"
+          onClose={() => !busy && setSelected(null)}
+        >
+          <form
+            className="space-y-4 p-6 pt-10"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (await mutate("course_accept", { id: selected.id, location }))
+                setSelected(null);
+            }}
+          >
+            <h2 className="font-bold">{selected.course}</h2>
+            <p className="text-sm">
+              {formatDate(selected.starts_at)} · {selected.modality} · S/
+              {selected.price}
+            </p>
+            <Label
+              title={
+                selected.modality === "Virtual"
+                  ? "Cómo coordinar la sesión"
+                  : "Lugar de la sesión"
+              }
+            >
+              <input
+                required
+                minLength={2}
+                maxLength={200}
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                className={field}
+              />
+            </Label>
+            <button disabled={busy} className={`${primary} w-full`}>
+              Aceptar y confirmar sesión
+            </button>
+          </form>
+        </DemoModal>
+      )}
+    </section>
+  );
+}
+
+const limaDay = (value: string) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
+function monday(value: string) {
+  const date = new Date(`${value}T12:00:00-05:00`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+function shiftDay(value: string, days: number) {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function WeekCalendar({ bookings }: { bookings: Booking[] }) {
+  const active = bookings.filter((b) =>
+    ["Pendiente", "Confirmada"].includes(b.status),
+  );
+  const next = active.find((b) => !ended(b));
+  const [week, setWeek] = useState(() =>
+    monday(next ? limaDay(next.starts_at) : todayLima()),
+  );
+  const days = Array.from({ length: 7 }, (_, i) => shiftDay(week, i));
+  return (
+    <section className={`${panel} space-y-4`} aria-label="Horario semanal">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-[#003B71]">
+            Tu horario semanal
+          </h2>
+          <p className="text-xs text-gray-500">
+            {week} — {days[6]} · Lima
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={secondary}
+            aria-label="Semana anterior"
+            onClick={() => setWeek(shiftDay(week, -7))}
+          >
+            ←
+          </button>
+          <button
+            className={secondary}
+            onClick={() => setWeek(monday(todayLima()))}
+          >
+            Hoy
+          </button>
+          <button
+            className={secondary}
+            aria-label="Semana siguiente"
+            onClick={() => setWeek(shiftDay(week, 7))}
+          >
+            →
+          </button>
+          {next && (
+            <button
+              className={secondary}
+              onClick={() => setWeek(monday(limaDay(next.starts_at)))}
+            >
+              Próxima asesoría
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="text-xs text-gray-500">
+        Ámbar: pendiente · Verde: confirmada. Los horarios solicitados requieren
+        aceptación del profesor.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-7">
+        {days.map((day) => (
+          <div
+            key={day}
+            className={`min-w-0 rounded-xl border p-2 ${day === todayLima() ? "border-blue-400 bg-blue-50/40" : "border-gray-200"}`}
+          >
+            <h3 className="mb-3 text-sm font-bold capitalize text-gray-700">
+              {new Intl.DateTimeFormat("es-PE", {
+                timeZone: "America/Lima",
+                weekday: "short",
+                day: "numeric",
+              }).format(new Date(`${day}T12:00:00-05:00`))}
+            </h3>
+            <div className="space-y-2">
+              {active
+                .filter((b) => limaDay(b.starts_at) === day)
+                .map((b) => (
+                  <article
+                    key={b.id}
+                    className={`break-words rounded-lg p-2 text-xs ${b.status === "Confirmada" ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"}`}
+                  >
+                    <p className="font-bold">
+                      {new Intl.DateTimeFormat("es-PE", {
+                        timeZone: "America/Lima",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      }).format(new Date(b.starts_at))}{" "}
+                      · 45 min
+                    </p>
+                    <p className="mt-1 font-bold">{b.course}</p>
+                    <p className="mt-1">
+                      S/{b.price} · {b.modality}
+                    </p>
+                    <p className="mt-1">
+                      {b.course_request ? "Por asignar" : b.status}
+                    </p>
+                  </article>
+                ))}
+              {!active.some((b) => limaDay(b.starts_at) === day) && (
+                <p className="text-xs text-gray-400">Sin asesorías</p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
