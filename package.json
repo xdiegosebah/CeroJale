@@ -8,7 +8,7 @@
     "dev": "vite --host 0.0.0.0",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test src/app/*.test.mjs",
-    "test:db": "node tests/database.mjs"
+    "test:db": "node tests/database.mjs && node tests/catalog.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
